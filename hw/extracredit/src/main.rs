@@ -1,3 +1,4 @@
+use core::time;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -125,14 +126,12 @@ impl UserThread {
                     let (lock, cvar) = &*self.free_disks;
                     let disk_id = request(&lock, &cvar); // get next available disk
                     disk_num = disk_id;
-                    let mut d_manager = self.d_manager.lock().unwrap(); // lock the disk manager to curretn user
+                    let mut d_manager = self.d_manager.lock().unwrap(); // lock the disk manager to current user
                     f_name = String::from(parts[1]);
 
                     disk = Some(d_manager.create_file(&f_name, disk_id)); // create file in disk manager on disk
                 }
                 ".end" => {
-                    let (lock, cvar) = &*self.free_disks;
-                    release(&lock, &cvar, disk_num); // free disk to other users
                     let mut d_manager = self.d_manager.lock().unwrap(); // lock disk manager to update info about file
                     let file = d_manager.directory.lookup_mut(&f_name);
                     file.file_length = f_length; // update file length
@@ -140,30 +139,38 @@ impl UserThread {
                     if let Some(disk) = disk.take() {
                         d_manager.disks[disk_num as usize] = disk;
                     }
+                    
+                    let (lock, cvar) = &*self.free_disks;
+                    release(&lock, &cvar, disk_num); // free disk to other users
                 }
                 ".print" => {
                     let (lock, cvar) = &*self.free_printers;
                     let printer_id = request(&lock, &cvar); // get available printer
 
-                    let (file_length, file_starting_sector, disk, printer) = {
+                    let (file_length, file_starting_sector, disk_clone, printer) = {
                         let d_manager = self.d_manager.lock().unwrap();
 
                         let file = d_manager.directory.lookup(&String::from(parts[1])); // get the file info
-                        let disk = d_manager.disks[file.disk_number as usize].clone();
+                        let disk_c = d_manager.disks[file.disk_number as usize].clone();
                         // get the disk the file is on
                         let p_manager = self.p_manager.lock().unwrap(); // lock the printer manager
                         let printer = p_manager.printers[printer_id as usize];
 
-                        (file.file_length, file.starting_sector, disk, printer)
+                        (file.file_length, file.starting_sector, disk_c, printer)
                     }; // block this code so that d_manager & p_manager fall out of scope and unlock for other threads
 
-                    print_job(printer, disk, file_length, file_starting_sector); // print_file
+                    print_job(printer, disk_clone, file_length, file_starting_sector); // print_file
 
                     release(&lock, &cvar, printer_id); // release printer
                 }
                 _ => {
+                    let starting_sector = {
+                        let d_manager = self.d_manager.lock().unwrap();
+                        let file = d_manager.directory.lookup(&f_name);
+                        file.starting_sector
+                    };
                     if let Some(disk) = &mut disk {
-                        disk.write(&line);
+                        disk.write(&line, starting_sector + f_length);
                         f_length += 1;
                     }
                 }
@@ -195,10 +202,11 @@ impl DiskManager {
     }
 
     fn create_file(&mut self, f_name: &String, disk_num: u32) -> Disk {
-        let disk = &self.disks[disk_num as usize];
+        let disk = &mut self.disks[disk_num as usize];
 
         self.directory
             .enter(f_name, FileInfo::new(disk_num, disk.next_available_sector));
+        disk.next_available_sector += 5;
         self.disks[disk_num as usize].clone()
     }
 }
@@ -279,7 +287,7 @@ struct Disk {
 }
 
 impl Disk {
-    const NUM_SECTORS: u32 = 200;
+    const NUM_SECTORS: u32 = 2000;
 
     fn new() -> Self {
         Disk {
@@ -287,12 +295,13 @@ impl Disk {
             next_available_sector: 0,
         }
     }
-    fn write(&mut self, data: &String) -> () {
-        self.sectors[self.next_available_sector as usize] = String::from(data);
-        self.next_available_sector += 1;
+    fn write(&mut self, data: &String, sector: u32) -> () {
+        self.sectors[sector as usize] = String::from(data);
+        thread::sleep(time::Duration::from_millis(5));
     }
 
     fn read(&self, sector: u32) -> &String {
+        thread::sleep(time::Duration::from_millis(5));
         &self.sectors[sector as usize]
     }
 }
@@ -315,5 +324,6 @@ impl Printer {
             .unwrap();
         let content = data.as_str();
         writeln!(f, "{content}").unwrap();
+        thread::sleep(time::Duration::from_millis(10));
     }
 }

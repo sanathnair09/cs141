@@ -3,6 +3,6 @@
 .DS_Store
 /hw/extracredit/target/*
 /hw/extracredit/.vscode/*
-/hw/extracredit/src/USER*
+/hw/extracredit/src/PRINTER*
 /hw/extracredit/src/check
 hw/extracredit/Cargo.lock
