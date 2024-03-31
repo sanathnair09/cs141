@@ -139,7 +139,7 @@ impl UserThread {
                     if let Some(disk) = disk.take() {
                         d_manager.disks[disk_num as usize] = disk;
                     }
-                    
+
                     let (lock, cvar) = &*self.free_disks;
                     release(&lock, &cvar, disk_num); // free disk to other users
                 }
